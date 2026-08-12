@@ -142,6 +142,66 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /notification:
+    post:
+      summary: Terima notifikasi dari aplikasi listener Android
+      description: |
+        Menerima langsung payload dari
+        [android-notification-listener](https://github.com/Saquone/android-notification-listener):
+        verifikasi tanda tangan, ekstrak nominal, kembalikan hasilnya.
+
+        Hanya aktif bila server dijalankan dengan `-patterns`. Bila `-secret` juga diberikan,
+        header `X-Signature` (HMAC-SHA256 hex atas body mentah) wajib cocok.
+
+        **Selalu 200 saat tanda tangan sah**, termasuk ketika nominal tidak terbaca
+        (`matched: false`) — notifikasi promo/cashback ikut terkirim, dan menjawabnya dengan
+        error membuat aplikasi mengirim ulang selamanya.
+      parameters:
+        - in: header
+          name: X-Signature
+          schema: { type: string }
+          description: HMAC-SHA256 hex atas body. Wajib bila server dijalankan dengan `-secret`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [package_name, title, text, posted_at]
+              properties:
+                package_name: { type: string, example: "id.dana" }
+                title: { type: string, example: "Pembayaran Masuk" }
+                text: { type: string, example: "Rp50.137 diterima DANA Bisnis." }
+                posted_at:
+                  type: integer
+                  format: int64
+                  description: Epoch milidetik
+                  example: 1765432100000
+      responses:
+        "200":
+          description: Hasil ekstraksi
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  package_name: { type: string }
+                  posted_at: { type: integer, format: int64 }
+                  matched: { type: boolean }
+                  amount:
+                    type: [integer, "null"]
+                    description: Nominal Rupiah bulat, `null` bila tidak terbaca
+        "401":
+          description: Tanda tangan tidak cocok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   /parse:
     post:
       summary: Ekstrak nominal dari teks notifikasi

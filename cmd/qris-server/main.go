@@ -9,10 +9,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/saquone/qris"
 	"github.com/saquone/qris/notif"
 	"github.com/saquone/qris/qrimage"
+	"github.com/saquone/qris/webhook"
 )
 
 const (
@@ -35,7 +37,23 @@ const docsHTML = `<!doctype html>
 
 func main() {
 	addr := flag.String("addr", ":8080", "alamat listen")
+	secret := flag.String("secret", "", "secret HMAC untuk /notification (kosong = tanda tangan tidak diperiksa)")
+	patternsFile := flag.String("patterns", "", "berkas pola regex nominal, satu per baris — mengaktifkan /notification")
 	flag.Parse()
+
+	var parser *notif.Parser
+	if *patternsFile != "" {
+		raw, err := os.ReadFile(*patternsFile)
+		if err != nil {
+			log.Fatalf("gagal membaca %s: %v", *patternsFile, err)
+		}
+		if parser, err = notif.NewFromTemplate(string(raw)); err != nil {
+			log.Fatalf("pola di %s tidak ada yang valid: %v", *patternsFile, err)
+		}
+		if *secret == "" {
+			log.Print("PERINGATAN: -secret kosong, tanda tangan /notification TIDAK diperiksa")
+		}
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +144,45 @@ func main() {
 		}
 		write(w, http.StatusOK, map[string]any{"amount": amount})
 	})
+
+	// Menerima langsung payload dari github.com/Saquone/android-notification-listener.
+	// Aktif hanya bila -patterns diberikan.
+	if parser != nil {
+		mux.HandleFunc("POST /notification", func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(io.LimitReader(r.Body, maxJSON))
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			if *secret != "" && !webhook.Verify(*secret, r.Header.Get(webhook.DefaultHeader), body) {
+				write(w, http.StatusUnauthorized, map[string]any{"error": "tanda tangan tidak cocok"})
+				return
+			}
+			var req struct {
+				PackageName string `json:"package_name"`
+				Title       string `json:"title"`
+				Text        string `json:"text"`
+				PostedAt    int64  `json:"posted_at"`
+			}
+			if err := json.Unmarshal(body, &req); err != nil {
+				fail(w, err)
+				return
+			}
+			res := map[string]any{
+				"package_name": req.PackageName,
+				"posted_at":    req.PostedAt,
+				"matched":      false,
+				"amount":       nil,
+			}
+			// Nominal tak terbaca BUKAN error: notifikasi promo/cashback ikut terkirim dan
+			// harus dijawab 2xx, kalau tidak aplikasi mengirim ulang selamanya.
+			if amount, err := parser.ParseAmount(req.Title + " " + req.Text); err == nil {
+				res["matched"], res["amount"] = true, amount
+			}
+			write(w, http.StatusOK, res)
+		})
+		log.Printf("/notification aktif (pola dari %s)", *patternsFile)
+	}
 
 	log.Printf("qris-server listen di %s — dokumentasi di %s/docs", *addr, *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))

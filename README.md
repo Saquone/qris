@@ -191,6 +191,7 @@ langsung dari browser.
 | `POST /merchant` | `{"payload":"..."}` | `{"name":"TOKO DEMO"}` |
 | `POST /decode` | bytes gambar mentah (PNG/JPEG) | `{"payload":"..."}` |
 | `POST /parse` | `{"patterns":["..."],"text":"..."}` | `{"amount":50137}` |
+| `POST /notification` | payload aplikasi listener Android | `{"amount":50137,"matched":true,...}` |
 
 Gagal → HTTP 400 + `{"error":"pesan"}`. `POST /validate` selalu balik 200; hasilnya
 ada di field `valid`.
@@ -213,8 +214,41 @@ $ curl -s localhost:8080/decode --data-binary @qris-toko.png
 {"payload":"000201010211266500..."}
 ```
 
-API ini sengaja tidak punya webhook: tidak ada state, jadi tidak ada event untuk
-dikirim. Webhook dipakai dari sisi aplikasimu lewat paket `webhook` di atas.
+API ini tidak *mengirim* webhook — tidak ada state, jadi tidak ada event untuk dikirim.
+Untuk mengirim, pakai paket `webhook` dari aplikasimu sendiri.
+
+### Pasangan langsung dengan aplikasi Android
+
+`POST /notification` menerima apa adanya payload dari
+[android-notification-listener](https://github.com/Saquone/android-notification-listener)
+— **tanpa satu baris kode pun yang perlu kamu tulis**:
+
+```bash
+cat > patterns.txt <<'EOF'
+(?i)Rp\s?([0-9.,]+)\s*diterima
+(?i)menerima Rp ?([0-9.,]+)
+EOF
+
+qris-server -secret whsec_rahasia -patterns patterns.txt
+```
+
+Isi URL `http://<ip-servermu>:8080/notification` dan secret yang sama di aplikasi Android,
+lalu tiap notifikasi masuk dijawab begini:
+
+```json
+{"amount":50137,"matched":true,"package_name":"id.dana","posted_at":1765432100000}
+```
+
+Endpoint hanya aktif kalau `-patterns` diberikan. Dengan `-secret`, header `X-Signature`
+wajib cocok (`401` kalau tidak). Pola dicoba berurutan, jadi baris lama tetap jadi fallback
+saat format teks bank berubah.
+
+Notifikasi yang nominalnya tidak terbaca (promo, cashback) dijawab **200** dengan
+`matched: false`, bukan error — kalau dijawab error, aplikasi Android akan mengirim ulang
+selamanya.
+
+Ini sengaja berhenti di "ekstrak nominal". Mencocokkannya dengan transaksi, menyimpan, dan
+menagih adalah aplikasimu — lihat [Batas](#batas).
 
 ---
 
