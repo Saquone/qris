@@ -142,6 +142,34 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /gateways:
+    get:
+      summary: Katalog gateway yang didukung
+      description: |
+        Satu-satunya sumber kebenaran tentang aplikasi mana yang didukung dan pola apa yang
+        dipakai membaca nominalnya. Aplikasi Android mengambil daftar ini lalu menyimpannya
+        untuk dipakai offline.
+      responses:
+        "200":
+          description: Daftar gateway
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    key: { type: string, example: "gopay" }
+                    label: { type: string, example: "GoPay Merchant" }
+                    packages:
+                      type: array
+                      items: { type: string }
+                      description: Nama paket Android
+                    patterns:
+                      type: array
+                      items: { type: string }
+                      description: Pola regex, dicoba berurutan; tiap pola satu capture group
+
   /notification:
     post:
       summary: Terima notifikasi dari aplikasi listener Android
@@ -150,8 +178,8 @@ paths:
         [android-notification-listener](https://github.com/Saquone/android-notification-listener):
         verifikasi tanda tangan, ekstrak nominal, kembalikan hasilnya.
 
-        Hanya aktif bila server dijalankan dengan `-patterns`. Bila `-secret` juga diberikan,
-        header `X-Signature` (HMAC-SHA256 hex atas body mentah) wajib cocok.
+        Pola nominal diambil dari katalog bawaan, atau dari berkas `-patterns` bila diberikan.
+        Bila `-secret` diberikan, header `X-Signature` (HMAC-SHA256 hex atas body) wajib cocok.
 
         **Selalu 200 saat tanda tangan sah**, termasuk ketika nominal tidak terbaca
         (`matched: false`) — notifikasi promo/cashback ikut terkirim, dan menjawabnya dengan

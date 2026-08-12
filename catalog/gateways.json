@@ -1,0 +1,104 @@
+[
+  {
+    "key": "dana",
+    "label": "DANA Bisnis",
+    "packages": ["id.dana.bisnis", "id.dana"],
+    "patterns": [
+      "(?i)Rp\\s?([0-9.,]+)\\s*diterima",
+      "(?i)menerima\\s+Rp\\s?([0-9.,]+)"
+    ]
+  },
+  {
+    "key": "gopay",
+    "label": "GoPay Merchant",
+    "packages": ["com.gojek.gopaymerchant"],
+    "patterns": [
+      "(?i)menerima\\s+(?:pembayaran\\s+)?Rp\\s?([0-9.,]+)",
+      "(?i)pembayaran\\s+Rp\\s?([0-9.,]+)\\s*berhasil",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima)"
+    ]
+  },
+  {
+    "key": "grab",
+    "label": "Grab Merchant",
+    "packages": ["com.grab.merchant"],
+    "patterns": [
+      "(?i)(?:menerima|diterima)\\s*(?:pembayaran\\s*)?Rp\\s?([0-9.,]+)",
+      "(?i)pembayaran\\s+Rp\\s?([0-9.,]+)"
+    ]
+  },
+  {
+    "key": "bri",
+    "label": "BRI Merchant",
+    "packages": ["id.co.bri.merchant"],
+    "patterns": [
+      "(?i)sebesar\\s+Rp\\s?([0-9.,]+)",
+      "(?i)menerima\\s+(?:pembayaran\\s+)?(?:QRIS\\s+)?(?:sebesar\\s+)?Rp\\s?([0-9.,]+)",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima)"
+    ]
+  },
+  {
+    "key": "shopeepay",
+    "label": "ShopeePay Merchant",
+    "packages": ["com.shopeepay.merchant.id", "com.shopee.mitra.id"],
+    "patterns": [
+      "(?i)pembayaran\\s+(?:ShopeePay\\s+)?Rp\\s?([0-9.,]+)",
+      "(?i)menerima\\s+Rp\\s?([0-9.,]+)",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima|berhasil)"
+    ]
+  },
+  {
+    "key": "ovo",
+    "label": "OVO",
+    "packages": ["ovo.id"],
+    "patterns": [
+      "(?i)menerima\\s+Rp\\s?([0-9.,]+)",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima)"
+    ]
+  },
+  {
+    "key": "linkaja",
+    "label": "LinkAja",
+    "packages": ["com.telkom.mwallet"],
+    "patterns": [
+      "(?i)menerima\\s+Rp\\s?([0-9.,]+)",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima)"
+    ]
+  },
+  {
+    "key": "brimo",
+    "label": "BRImo",
+    "packages": ["id.co.bri.brimo"],
+    "patterns": [
+      "(?i)(?:dana\\s+masuk|kredit)\\s*Rp\\s?([0-9.,]+)",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima)"
+    ]
+  },
+  {
+    "key": "bca",
+    "label": "myBCA / blu",
+    "packages": ["com.bca.mybca.omni.android", "com.bcadigital.blu"],
+    "patterns": [
+      "(?i)(?:dana\\s+masuk|kredit)\\s*Rp\\s?([0-9.,]+)",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima)"
+    ]
+  },
+  {
+    "key": "bni",
+    "label": "wondr by BNI",
+    "packages": ["id.bni.wondr"],
+    "patterns": [
+      "(?i)(?:dana\\s+masuk|kredit)\\s*Rp\\s?([0-9.,]+)",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima)"
+    ]
+  },
+  {
+    "key": "jago",
+    "label": "Bank Jago",
+    "packages": ["com.jago.digitalBanking"],
+    "patterns": [
+      "(?i)(?:dana\\s+masuk|kredit)\\s*Rp\\s?([0-9.,]+)",
+      "(?i)Rp\\s?([0-9.,]+)\\s*(?:masuk|diterima)"
+    ]
+  }
+]

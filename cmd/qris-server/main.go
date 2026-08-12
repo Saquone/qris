@@ -13,6 +13,7 @@ import (
 	"strconv"
 
 	"github.com/saquone/qris"
+	"github.com/saquone/qris/catalog"
 	"github.com/saquone/qris/notif"
 	"github.com/saquone/qris/qrimage"
 	"github.com/saquone/qris/webhook"
@@ -39,7 +40,7 @@ const docsHTML = `<!doctype html>
 func main() {
 	addr := flag.String("addr", ":8080", "alamat listen")
 	secret := flag.String("secret", "", "secret HMAC untuk /notification (kosong = tanda tangan tidak diperiksa)")
-	patternsFile := flag.String("patterns", "", "berkas pola regex nominal, satu per baris — mengaktifkan /notification")
+	patternsFile := flag.String("patterns", "", "berkas pola regex nominal, satu per baris (default: katalog bawaan)")
 	dbPath := flag.String("db", "qris.db", "berkas SQLite penyimpan notifikasi (kosong = tidak disimpan)")
 	flag.Parse()
 
@@ -53,23 +54,35 @@ func main() {
 		store = s
 	}
 
+	// Tanpa -patterns, pakai katalog bawaan — /notification aktif sejak awal tanpa konfigurasi.
 	var parser *notif.Parser
+	var err error
 	if *patternsFile != "" {
-		raw, err := os.ReadFile(*patternsFile)
-		if err != nil {
-			log.Fatalf("gagal membaca %s: %v", *patternsFile, err)
+		raw, e := os.ReadFile(*patternsFile)
+		if e != nil {
+			log.Fatalf("gagal membaca %s: %v", *patternsFile, e)
 		}
 		if parser, err = notif.NewFromTemplate(string(raw)); err != nil {
 			log.Fatalf("pola di %s tidak ada yang valid: %v", *patternsFile, err)
 		}
-		if *secret == "" {
-			log.Print("PERINGATAN: -secret kosong, tanda tangan /notification TIDAK diperiksa")
-		}
+		log.Printf("pola nominal dari %s", *patternsFile)
+	} else if parser, err = catalog.Parser(); err != nil {
+		log.Fatalf("katalog bawaan rusak: %v", err)
+	}
+	if *secret == "" {
+		log.Print("PERINGATAN: -secret kosong, tanda tangan /notification TIDAK diperiksa")
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusOK, map[string]any{"status": "ok"})
+	})
+
+	// Katalog gateway: aplikasi Android mengambil daftar aplikasi yang didukung + pola parsernya
+	// dari sini, lalu menyimpannya untuk dipakai offline.
+	mux.HandleFunc("GET /gateways", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(catalog.Raw())
 	})
 
 	mux.HandleFunc("GET /openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
@@ -158,54 +171,50 @@ func main() {
 	})
 
 	// Menerima langsung payload dari github.com/Saquone/android-notification-listener.
-	// Aktif hanya bila -patterns diberikan.
-	if parser != nil {
-		mux.HandleFunc("POST /notification", func(w http.ResponseWriter, r *http.Request) {
-			body, err := io.ReadAll(io.LimitReader(r.Body, maxJSON))
-			if err != nil {
-				fail(w, err)
-				return
+	mux.HandleFunc("POST /notification", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxJSON))
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		if *secret != "" && !webhook.Verify(*secret, r.Header.Get(webhook.DefaultHeader), body) {
+			write(w, http.StatusUnauthorized, map[string]any{"error": "tanda tangan tidak cocok"})
+			return
+		}
+		var req struct {
+			PackageName string `json:"package_name"`
+			Title       string `json:"title"`
+			Text        string `json:"text"`
+			PostedAt    int64  `json:"posted_at"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			fail(w, err)
+			return
+		}
+		res := map[string]any{
+			"package_name": req.PackageName,
+			"posted_at":    req.PostedAt,
+			"matched":      false,
+			"amount":       nil,
+		}
+		// Nominal tak terbaca BUKAN error: notifikasi promo/cashback ikut terkirim dan
+		// harus dijawab 2xx, kalau tidak aplikasi mengirim ulang selamanya.
+		var amount *int64
+		if a, err := parser.ParseAmount(req.Title + " " + req.Text); err == nil {
+			amount = &a
+			res["matched"], res["amount"] = true, a
+		}
+		if store != nil {
+			n := Notification{
+				PackageName: req.PackageName, Title: req.Title, Text: req.Text,
+				PostedAt: req.PostedAt, Amount: amount,
 			}
-			if *secret != "" && !webhook.Verify(*secret, r.Header.Get(webhook.DefaultHeader), body) {
-				write(w, http.StatusUnauthorized, map[string]any{"error": "tanda tangan tidak cocok"})
-				return
+			if err := store.Save(n); err != nil {
+				log.Printf("gagal menyimpan notifikasi: %v", err)
 			}
-			var req struct {
-				PackageName string `json:"package_name"`
-				Title       string `json:"title"`
-				Text        string `json:"text"`
-				PostedAt    int64  `json:"posted_at"`
-			}
-			if err := json.Unmarshal(body, &req); err != nil {
-				fail(w, err)
-				return
-			}
-			res := map[string]any{
-				"package_name": req.PackageName,
-				"posted_at":    req.PostedAt,
-				"matched":      false,
-				"amount":       nil,
-			}
-			// Nominal tak terbaca BUKAN error: notifikasi promo/cashback ikut terkirim dan
-			// harus dijawab 2xx, kalau tidak aplikasi mengirim ulang selamanya.
-			var amount *int64
-			if a, err := parser.ParseAmount(req.Title + " " + req.Text); err == nil {
-				amount = &a
-				res["matched"], res["amount"] = true, a
-			}
-			if store != nil {
-				n := Notification{
-					PackageName: req.PackageName, Title: req.Title, Text: req.Text,
-					PostedAt: req.PostedAt, Amount: amount,
-				}
-				if err := store.Save(n); err != nil {
-					log.Printf("gagal menyimpan notifikasi: %v", err)
-				}
-			}
-			write(w, http.StatusOK, res)
-		})
-		log.Printf("/notification aktif (pola dari %s)", *patternsFile)
-	}
+		}
+		write(w, http.StatusOK, res)
+	})
 
 	if store != nil {
 		mux.HandleFunc("GET /notifications", func(w http.ResponseWriter, r *http.Request) {
