@@ -1,0 +1,187 @@
+openapi: 3.1.0
+info:
+  title: qris-server
+  version: 0.1.0
+  description: |
+    HTTP API stateless untuk konversi & validasi QRIS. Tanpa database, tanpa
+    autentikasi — jalankan di jaringan internal atau di belakang gateway sendiri.
+
+    Sumber: https://github.com/saquone/qris
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: http://localhost:8080
+
+paths:
+  /health:
+    get:
+      summary: Cek server hidup
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: ok }
+
+  /to-dynamic:
+    post:
+      summary: QRIS statis → dinamis bernominal
+      description: |
+        Tag 01 diubah 11 → 12, nominal disisipkan di tag 54, CRC (tag 63) dihitung
+        ulang. Identitas merchant tidak disentuh.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload, amount]
+              properties:
+                payload:
+                  type: string
+                  description: Payload QRIS statis
+                  example: "00020101021126650014COM.GO-JEK.WWW…63048748"
+                amount:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: Nominal Rupiah bulat
+                  example: 50137
+      responses:
+        "200":
+          description: Payload dinamis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payload: { type: string }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /validate:
+    post:
+      summary: Cek payload QRIS statis IDR
+      description: |
+        Selalu balik 200 — hasilnya ada di field `valid`. Status 400 hanya untuk
+        request yang tidak bisa dibaca.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload: { type: string }
+      responses:
+        "200":
+          description: Hasil pemeriksaan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  error:
+                    type: [string, "null"]
+                    description: Alasan bila tidak valid
+                    examples: ["QRIS tidak valid (checksum)", "Ini QRIS dinamis, butuh QRIS statis"]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /merchant:
+    post:
+      summary: Nama merchant (tag 59)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload: { type: string }
+      responses:
+        "200":
+          description: Nama merchant, string kosong bila payload tak terbaca
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string, example: "TOKO DEMO" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /decode:
+    post:
+      summary: Baca payload QR dari gambar
+      description: Body = bytes gambar mentah, bukan JSON. Maksimal 5 MB.
+      requestBody:
+        required: true
+        content:
+          image/png:
+            schema: { type: string, format: binary }
+          image/jpeg:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Payload QR
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payload: { type: string }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /parse:
+    post:
+      summary: Ekstrak nominal dari teks notifikasi
+      description: |
+        Pola dicoba berurutan; yang pertama menghasilkan nominal valid menang.
+        Tiap pola wajib punya satu capture group berisi angka.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [patterns, text]
+              properties:
+                patterns:
+                  type: array
+                  items: { type: string }
+                  example: ["menerima Rp ?([0-9.,]+)"]
+                text:
+                  type: string
+                  example: "DANA: Anda menerima Rp 50.137 dari BUDI"
+      responses:
+        "200":
+          description: Nominal Rupiah bulat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  amount: { type: integer, format: int64, example: 50137 }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+components:
+  responses:
+    BadRequest:
+      description: Request tidak valid
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: "nominal tidak valid" }
