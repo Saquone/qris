@@ -193,6 +193,7 @@ langsung dari browser.
 | `POST /parse` | `{"patterns":["..."],"text":"..."}` | `{"amount":50137}` |
 | `POST /notification` | payload aplikasi listener Android | `{"amount":50137,"matched":true,...}` |
 | `GET /notifications` | `?limit=50` | notifikasi tersimpan, terbaru dulu |
+| `GET /gateways` | — | katalog gateway + pola parsernya |
 
 Gagal → HTTP 400 + `{"error":"pesan"}`. `POST /validate` selalu balik 200; hasilnya
 ada di field `valid`.
@@ -217,6 +218,33 @@ $ curl -s localhost:8080/decode --data-binary @qris-toko.png
 
 API ini tidak *mengirim* webhook — tidak ada state, jadi tidak ada event untuk dikirim.
 Untuk mengirim, pakai paket `webhook` dari aplikasimu sendiri.
+
+### Katalog gateway
+
+`catalog/gateways.json` adalah **satu-satunya sumber kebenaran** tentang aplikasi mana yang
+didukung dan pola apa yang membaca nominalnya. Aplikasi Android mengambilnya lewat
+`GET /gateways` lalu menyimpannya untuk dipakai offline — menambah dukungan gateway baru
+tidak perlu rilis ulang APK.
+
+```go
+import "github.com/saquone/qris/catalog"
+
+for _, g := range catalog.All() {
+    fmt.Println(g.Key, g.Label, g.Packages, len(g.Patterns))
+}
+
+g, ok := catalog.ByPackage("com.gojek.gopaymerchant")  // → gateway "gopay"
+p, _ := catalog.Parser()                               // pola semua gateway digabung
+```
+
+Banknya belum ada? Jalankan dengan katalogmu sendiri, tanpa mem-fork:
+
+```bash
+qris-server -catalog gateways-saya.json
+```
+
+Pola bawaan untuk beberapa gateway masih tebakan terdidik — saya belum punya teks notifikasi
+asli semua bank. Kirim PR dengan contoh teks (sensor nama & nomor rekening) kalau punya.
 
 ### Pasangan langsung dengan aplikasi Android
 

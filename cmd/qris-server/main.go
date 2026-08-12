@@ -42,6 +42,7 @@ func main() {
 	secret := flag.String("secret", "", "secret HMAC untuk /notification (kosong = tanda tangan tidak diperiksa)")
 	patternsFile := flag.String("patterns", "", "berkas pola regex nominal, satu per baris (default: katalog bawaan)")
 	dbPath := flag.String("db", "qris.db", "berkas SQLite penyimpan notifikasi (kosong = tidak disimpan)")
+	catalogFile := flag.String("catalog", "", "berkas katalog gateway JSON (default: katalog bawaan)")
 	flag.Parse()
 
 	var store *Store
@@ -52,6 +53,20 @@ func main() {
 		}
 		defer s.Close()
 		store = s
+	}
+
+	catalogJSON := catalog.Raw()
+	if *catalogFile != "" {
+		b, err := os.ReadFile(*catalogFile)
+		if err != nil {
+			log.Fatalf("gagal membaca %s: %v", *catalogFile, err)
+		}
+		var check []catalog.Gateway
+		if err := json.Unmarshal(b, &check); err != nil || len(check) == 0 {
+			log.Fatalf("katalog %s tidak valid: %v", *catalogFile, err)
+		}
+		catalogJSON = b
+		log.Printf("katalog dari %s (%d gateway)", *catalogFile, len(check))
 	}
 
 	// Tanpa -patterns, pakai katalog bawaan — /notification aktif sejak awal tanpa konfigurasi.
@@ -79,10 +94,11 @@ func main() {
 	})
 
 	// Katalog gateway: aplikasi Android mengambil daftar aplikasi yang didukung + pola parsernya
-	// dari sini, lalu menyimpannya untuk dipakai offline.
+	// dari sini, lalu menyimpannya untuk dipakai offline. -catalog menimpanya dengan berkas
+	// sendiri, buat yang banknya belum ada di katalog bawaan.
 	mux.HandleFunc("GET /gateways", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(catalog.Raw())
+		w.Write(catalogJSON)
 	})
 
 	mux.HandleFunc("GET /openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
