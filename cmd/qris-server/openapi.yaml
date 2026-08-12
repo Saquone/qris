@@ -202,6 +202,35 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /notifications:
+    get:
+      summary: Daftar notifikasi tersimpan
+      description: Aktif bila server dijalankan dengan `-db` (default `qris.db`).
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+      responses:
+        "200":
+          description: Terbaru lebih dulu
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        package_name: { type: string }
+                        title: { type: string }
+                        text: { type: string }
+                        posted_at: { type: integer, format: int64 }
+                        amount: { type: [integer, "null"] }
+                        received_at: { type: integer, format: int64 }
+
   /parse:
     post:
       summary: Ekstrak nominal dari teks notifikasi

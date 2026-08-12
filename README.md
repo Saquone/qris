@@ -192,6 +192,7 @@ langsung dari browser.
 | `POST /decode` | bytes gambar mentah (PNG/JPEG) | `{"payload":"..."}` |
 | `POST /parse` | `{"patterns":["..."],"text":"..."}` | `{"amount":50137}` |
 | `POST /notification` | payload aplikasi listener Android | `{"amount":50137,"matched":true,...}` |
+| `GET /notifications` | `?limit=50` | notifikasi tersimpan, terbaru dulu |
 
 Gagal → HTTP 400 + `{"error":"pesan"}`. `POST /validate` selalu balik 200; hasilnya
 ada di field `valid`.
@@ -242,6 +243,21 @@ lalu tiap notifikasi masuk dijawab begini:
 Endpoint hanya aktif kalau `-patterns` diberikan. Dengan `-secret`, header `X-Signature`
 wajib cocok (`401` kalau tidak). Pola dicoba berurutan, jadi baris lama tetap jadi fallback
 saat format teks bank berubah.
+
+Notifikasi yang masuk **disimpan ke SQLite** (`-db`, default `qris.db`) dan bisa dibaca ulang:
+
+```bash
+curl 'http://localhost:8080/notifications?limit=20'
+```
+
+Duplikat diabaikan lewat unique index `(package_name, text, posted_at)` — aplikasi Android
+mengirim ulang yang gagal dan menyapu ulang notification shade tiap rebind. Berkasnya SQLite
+biasa, jadi bisa dibuka dengan `sqlite3` atau tool apa pun. `-db ""` mematikan penyimpanan.
+
+Drivernya [modernc.org/sqlite](https://modernc.org/sqlite) — Go murni, **tanpa cgo**, jadi
+`go install` jalan tanpa toolchain C dan cross-compile tetap mudah. Harganya: binary
+`qris-server` naik dari ~10 MB ke ~16 MB. Library `qris` sendiri tidak terpengaruh —
+dependensi ini hanya dipakai `cmd/qris-server`.
 
 Notifikasi yang nominalnya tidak terbaca (promo, cashback) dijawab **200** dengan
 `matched: false`, bukan error — kalau dijawab error, aplikasi Android akan mengirim ulang

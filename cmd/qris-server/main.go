@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/saquone/qris"
 	"github.com/saquone/qris/notif"
@@ -39,7 +40,18 @@ func main() {
 	addr := flag.String("addr", ":8080", "alamat listen")
 	secret := flag.String("secret", "", "secret HMAC untuk /notification (kosong = tanda tangan tidak diperiksa)")
 	patternsFile := flag.String("patterns", "", "berkas pola regex nominal, satu per baris — mengaktifkan /notification")
+	dbPath := flag.String("db", "qris.db", "berkas SQLite penyimpan notifikasi (kosong = tidak disimpan)")
 	flag.Parse()
+
+	var store *Store
+	if *dbPath != "" {
+		s, err := OpenStore(*dbPath)
+		if err != nil {
+			log.Fatalf("gagal membuka %s: %v", *dbPath, err)
+		}
+		defer s.Close()
+		store = s
+	}
 
 	var parser *notif.Parser
 	if *patternsFile != "" {
@@ -176,12 +188,41 @@ func main() {
 			}
 			// Nominal tak terbaca BUKAN error: notifikasi promo/cashback ikut terkirim dan
 			// harus dijawab 2xx, kalau tidak aplikasi mengirim ulang selamanya.
-			if amount, err := parser.ParseAmount(req.Title + " " + req.Text); err == nil {
-				res["matched"], res["amount"] = true, amount
+			var amount *int64
+			if a, err := parser.ParseAmount(req.Title + " " + req.Text); err == nil {
+				amount = &a
+				res["matched"], res["amount"] = true, a
+			}
+			if store != nil {
+				n := Notification{
+					PackageName: req.PackageName, Title: req.Title, Text: req.Text,
+					PostedAt: req.PostedAt, Amount: amount,
+				}
+				if err := store.Save(n); err != nil {
+					log.Printf("gagal menyimpan notifikasi: %v", err)
+				}
 			}
 			write(w, http.StatusOK, res)
 		})
 		log.Printf("/notification aktif (pola dari %s)", *patternsFile)
+	}
+
+	if store != nil {
+		mux.HandleFunc("GET /notifications", func(w http.ResponseWriter, r *http.Request) {
+			limit := 50
+			if v := r.URL.Query().Get("limit"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+					limit = n
+				}
+			}
+			list, err := store.List(limit)
+			if err != nil {
+				fail(w, err)
+				return
+			}
+			write(w, http.StatusOK, map[string]any{"notifications": list})
+		})
+		log.Printf("notifikasi disimpan di %s", *dbPath)
 	}
 
 	log.Printf("qris-server listen di %s — dokumentasi di %s/docs", *addr, *addr)
