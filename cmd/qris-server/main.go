@@ -1,5 +1,5 @@
-// Command qris-server mengekspos library ini sebagai HTTP API JSON — stateless,
-// tanpa database, untuk dipakai dari bahasa apa pun.
+// Command qris-server mengekspos library ini sebagai HTTP API JSON, plus alur lengkap
+// QRIS statis → QRIS dinamis → verifikasi pembayaran dari notifikasi.
 package main
 
 import (
@@ -10,7 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
+	"time"
 
 	"github.com/saquone/qris"
 	"github.com/saquone/qris/catalog"
@@ -28,7 +28,6 @@ const (
 var openapiSpec []byte
 
 // Swagger UI diambil dari CDN (versi dipin) supaya repo tidak menyimpan ~3 MB aset.
-// Butuh internet saat membuka /docs; /openapi.yaml sendiri tetap jalan offline.
 const docsHTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>qris-server API</title>
 <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.32.12/swagger-ui.css"></head>
@@ -37,22 +36,29 @@ const docsHTML = `<!doctype html>
 <script>SwaggerUIBundle({url: "openapi.yaml", dom_id: "#ui"})</script>
 </body></html>`
 
+type server struct {
+	store   *Store
+	parser  *notif.Parser
+	secret  string
+	qrisDir string
+}
+
 func main() {
 	addr := flag.String("addr", ":8080", "alamat listen")
 	secret := flag.String("secret", "", "secret HMAC untuk /notification (kosong = tanda tangan tidak diperiksa)")
 	patternsFile := flag.String("patterns", "", "berkas pola regex nominal, satu per baris (default: katalog bawaan)")
-	dbPath := flag.String("db", "qris.db", "berkas SQLite penyimpan notifikasi (kosong = tidak disimpan)")
+	dbPath := flag.String("db", "qris.db", "berkas SQLite")
+	qrisDir := flag.String("qris-dir", "qris-images", "folder penyimpan gambar QRIS statis yang diunggah")
 	catalogFile := flag.String("catalog", "", "berkas katalog gateway JSON (default: katalog bawaan)")
 	flag.Parse()
 
-	var store *Store
-	if *dbPath != "" {
-		s, err := OpenStore(*dbPath)
-		if err != nil {
-			log.Fatalf("gagal membuka %s: %v", *dbPath, err)
-		}
-		defer s.Close()
-		store = s
+	store, err := OpenStore(*dbPath)
+	if err != nil {
+		log.Fatalf("gagal membuka %s: %v", *dbPath, err)
+	}
+	defer store.Close()
+	if err := os.MkdirAll(*qrisDir, 0o755); err != nil {
+		log.Fatalf("gagal menyiapkan %s: %v", *qrisDir, err)
 	}
 
 	catalogJSON := catalog.Raw()
@@ -69,9 +75,8 @@ func main() {
 		log.Printf("katalog dari %s (%d gateway)", *catalogFile, len(check))
 	}
 
-	// Tanpa -patterns, pakai katalog bawaan — /notification aktif sejak awal tanpa konfigurasi.
+	// Tanpa -patterns, pakai katalog — server berguna sejak perintah pertama.
 	var parser *notif.Parser
-	var err error
 	if *patternsFile != "" {
 		raw, e := os.ReadFile(*patternsFile)
 		if e != nil {
@@ -88,14 +93,15 @@ func main() {
 		log.Print("PERINGATAN: -secret kosong, tanda tangan /notification TIDAK diperiksa")
 	}
 
+	s := &server{store: store, parser: parser, secret: *secret, qrisDir: *qrisDir}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		write(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 
 	// Katalog gateway: aplikasi Android mengambil daftar aplikasi yang didukung + pola parsernya
-	// dari sini, lalu menyimpannya untuk dipakai offline. -catalog menimpanya dengan berkas
-	// sendiri, buat yang banknya belum ada di katalog bawaan.
+	// dari sini, lalu menyimpannya untuk dipakai offline.
 	mux.HandleFunc("GET /gateways", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(catalogJSON)
@@ -186,88 +192,83 @@ func main() {
 		write(w, http.StatusOK, map[string]any{"amount": amount})
 	})
 
-	// Menerima langsung payload dari github.com/Saquone/android-notification-listener.
-	mux.HandleFunc("POST /notification", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxJSON))
+	s.registerQRIS(mux)
+	mux.HandleFunc("POST /notification", s.handleNotification)
+
+	mux.HandleFunc("GET /notifications", func(w http.ResponseWriter, r *http.Request) {
+		list, err := store.Notifications(limitParam(r, 50, 500))
 		if err != nil {
 			fail(w, err)
 			return
 		}
-		if *secret != "" && !webhook.Verify(*secret, r.Header.Get(webhook.DefaultHeader), body) {
-			write(w, http.StatusUnauthorized, map[string]any{"error": "tanda tangan tidak cocok"})
-			return
-		}
-		var req struct {
-			PackageName string `json:"package_name"`
-			Title       string `json:"title"`
-			Text        string `json:"text"`
-			PostedAt    int64  `json:"posted_at"`
-		}
-		if err := json.Unmarshal(body, &req); err != nil {
-			fail(w, err)
-			return
-		}
-		res := map[string]any{
-			"package_name": req.PackageName,
-			"posted_at":    req.PostedAt,
-			"matched":      false,
-			"amount":       nil,
-		}
-		// Nominal tak terbaca BUKAN error: notifikasi promo/cashback ikut terkirim dan
-		// harus dijawab 2xx, kalau tidak aplikasi mengirim ulang selamanya.
-		var amount *int64
-		if a, err := parser.ParseAmount(req.Title + " " + req.Text); err == nil {
-			amount = &a
-			res["matched"], res["amount"] = true, a
-		}
-		if store != nil {
-			n := Notification{
-				PackageName: req.PackageName, Title: req.Title, Text: req.Text,
-				PostedAt: req.PostedAt, Amount: amount,
-			}
-			if err := store.Save(n); err != nil {
-				log.Printf("gagal menyimpan notifikasi: %v", err)
-			}
-		}
-		write(w, http.StatusOK, res)
+		write(w, http.StatusOK, map[string]any{"notifications": list})
 	})
 
-	if store != nil {
-		mux.HandleFunc("GET /notifications", func(w http.ResponseWriter, r *http.Request) {
-			limit := 50
-			if v := r.URL.Query().Get("limit"); v != "" {
-				if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
-					limit = n
-				}
-			}
-			list, err := store.List(limit)
-			if err != nil {
-				fail(w, err)
-				return
-			}
-			write(w, http.StatusOK, map[string]any{"notifications": list})
-		})
-		log.Printf("notifikasi disimpan di %s", *dbPath)
-	}
+	// Gambar QRIS yang diunggah — supaya dashboard/aplikasi bisa menampilkannya lagi.
+	mux.Handle("GET /qris-images/", http.StripPrefix("/qris-images/", http.FileServer(http.Dir(*qrisDir))))
 
+	log.Printf("data di %s, gambar QRIS di %s", *dbPath, *qrisDir)
 	log.Printf("qris-server listen di %s — dokumentasi di %s/docs", *addr, *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }
 
-func read(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxJSON)).Decode(dst); err != nil {
+// handleNotification menerima payload aplikasi listener Android, mengekstrak nominal, lalu
+// MENCOCOKKANNYA dengan tagihan pending — inilah verifikasi pembayarannya.
+func (s *server) handleNotification(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxJSON))
+	if err != nil {
 		fail(w, err)
-		return false
+		return
 	}
-	return true
-}
+	if s.secret != "" && !webhook.Verify(s.secret, r.Header.Get(webhook.DefaultHeader), body) {
+		write(w, http.StatusUnauthorized, map[string]any{"error": "tanda tangan tidak cocok"})
+		return
+	}
+	var req struct {
+		PackageName string `json:"package_name"`
+		Title       string `json:"title"`
+		Text        string `json:"text"`
+		PostedAt    int64  `json:"posted_at"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		fail(w, err)
+		return
+	}
 
-func write(w http.ResponseWriter, code int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(body)
-}
+	res := map[string]any{
+		"package_name": req.PackageName,
+		"posted_at":    req.PostedAt,
+		"matched":      false,
+		"amount":       nil,
+		"charge_id":    nil,
+		"verified":     false,
+	}
 
-func fail(w http.ResponseWriter, err error) {
-	write(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+	// Nominal tak terbaca BUKAN error: notifikasi promo ikut terkirim dan harus dijawab 2xx,
+	// kalau tidak aplikasi mengirim ulang selamanya.
+	var amount, chargeID *int64
+	if a, err := s.parser.ParseAmount(req.Title + " " + req.Text); err == nil {
+		amount = &a
+		res["matched"], res["amount"] = true, a
+
+		now := time.Now().UnixMilli()
+		if err := s.store.ExpireDue(now); err != nil {
+			log.Printf("gagal meng-expire tagihan: %v", err)
+		}
+		if id, err := s.store.MatchCharge(a, now); err != nil {
+			log.Printf("gagal mencocokkan tagihan: %v", err)
+		} else if id > 0 {
+			chargeID = &id
+			res["charge_id"], res["verified"] = id, true
+		}
+	}
+
+	n := Notification{
+		PackageName: req.PackageName, Title: req.Title, Text: req.Text,
+		PostedAt: req.PostedAt, Amount: amount, ChargeID: chargeID,
+	}
+	if err := s.store.SaveNotification(n); err != nil {
+		log.Printf("gagal menyimpan notifikasi: %v", err)
+	}
+	write(w, http.StatusOK, res)
 }

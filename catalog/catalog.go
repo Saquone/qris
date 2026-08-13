@@ -20,6 +20,9 @@ type Gateway struct {
 	Label string `json:"label"`
 	// Packages = nama paket Android. Satu gateway bisa punya beberapa (versi konsumen vs merchant).
 	Packages []string `json:"packages"`
+	// Verified = pola sudah dicocokkan dengan teks notifikasi ASLI, bukan tebakan. Yang belum
+	// terverifikasi tetap disertakan supaya bisa dicoba, tapi ditandai jujur di UI.
+	Verified bool `json:"verified"`
 	// Patterns dicoba berurutan; tiap pola wajib punya satu capture group berisi angka.
 	Patterns []string `json:"patterns"`
 }

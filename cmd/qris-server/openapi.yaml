@@ -142,6 +142,86 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /qris:
+    post:
+      summary: Unggah QRIS statis
+      description: |
+        Body = bytes gambar mentah. Payload di-decode, divalidasi sebagai QRIS statis IDR,
+        gambarnya disimpan di folder `-qris-dir` dan payload teksnya di SQLite.
+      requestBody:
+        required: true
+        content:
+          image/png: { schema: { type: string, format: binary } }
+          image/jpeg: { schema: { type: string, format: binary } }
+      responses:
+        "200":
+          description: Merchant tersimpan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  name: { type: string, example: "TOKO DEMO" }
+                  image_file: { type: string }
+                  payload: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    get:
+      summary: Daftar QRIS statis tersimpan
+      responses:
+        "200": { description: OK }
+
+  /charges:
+    post:
+      summary: Buat tagihan (QRIS statis → dinamis bernominal)
+      description: |
+        Kode unik 1..999 ditambahkan ke nominal supaya dua tagihan tidak pernah bernominal
+        sama — tanpa itu notifikasi masuk tidak bisa dipetakan ke satu tagihan tertentu.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                merchant_id: { type: integer, description: "kosong = QRIS pertama" }
+                amount: { type: integer, format: int64, example: 50000 }
+                unique_min: { type: integer, default: 1 }
+                unique_max: { type: integer, default: 999 }
+                expires_in_seconds: { type: integer, default: 900 }
+      responses:
+        "200":
+          description: Tagihan dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  base_amount: { type: integer, format: int64 }
+                  unique_code: { type: integer }
+                  amount: { type: integer, format: int64, description: "nominal final yang harus dibayar" }
+                  payload: { type: string, description: "QRIS dinamis" }
+                  status: { type: string, enum: [pending, paid, expired] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    get:
+      summary: Daftar tagihan
+      responses:
+        "200": { description: Terbaru lebih dulu }
+
+  /charges/{id}:
+    get:
+      summary: Status satu tagihan
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: OK }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
   /gateways:
     get:
       summary: Katalog gateway yang didukung
@@ -215,10 +295,16 @@ paths:
                 properties:
                   package_name: { type: string }
                   posted_at: { type: integer, format: int64 }
-                  matched: { type: boolean }
+                  matched: { type: boolean, description: "nominal berhasil dibaca" }
                   amount:
                     type: [integer, "null"]
                     description: Nominal Rupiah bulat, `null` bila tidak terbaca
+                  verified:
+                    type: boolean
+                    description: Nominal cocok persis dengan tagihan pending, dan tagihan itu ditandai lunas
+                  charge_id:
+                    type: [integer, "null"]
+                    description: Tagihan yang dilunasi notifikasi ini
         "401":
           description: Tanda tangan tidak cocok
           content:
