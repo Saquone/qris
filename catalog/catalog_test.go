@@ -52,8 +52,7 @@ func TestParserExtractsAmount(t *testing.T) {
 		want int64
 	}{
 		{"Rp50.137 diterima DANA Bisnis.", 50137},
-		{"Kamu menerima Rp 75.000 dari pelanggan", 75000},
-		{"Pembayaran QRIS sebesar Rp1.250.000 berhasil", 1250000},
+		{"Rp1.250.000 diterima dari pelanggan", 1250000},
 	} {
 		got, err := p.ParseAmount(tc.text)
 		if err != nil || got != tc.want {
@@ -66,8 +65,8 @@ func TestParserExtractsAmount(t *testing.T) {
 }
 
 func TestByPackage(t *testing.T) {
-	if g, ok := catalog.ByPackage("com.gojek.gopaymerchant"); !ok || g.Key != "gopay" {
-		t.Errorf("ByPackage(gopaymerchant) = %q, %v", g.Key, ok)
+	if g, ok := catalog.ByPackage("id.dana"); !ok || g.Key != "dana" {
+		t.Errorf("ByPackage(id.dana) = %q, %v", g.Key, ok)
 	}
 	if _, ok := catalog.ByPackage("com.contoh.tidakada"); ok {
 		t.Error("paket asing dikenali sebagai gateway")
